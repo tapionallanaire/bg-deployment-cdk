@@ -18,7 +18,7 @@
 
 import { spawnSync } from 'node:child_process';
 
-interface CliArgs {
+export interface CliArgs {
   stackName: string;
   startGreenWeight: number;
   targetGreenWeight: number;
@@ -27,7 +27,7 @@ interface CliArgs {
   dryRun: boolean;
 }
 
-function parsePercent(value: string | undefined, flagName: string): number {
+export function parsePercent(value: string | undefined, flagName: string): number {
   const parsed = Number(value);
 
   if (!Number.isInteger(parsed) || parsed < 0 || parsed > 100) {
@@ -37,9 +37,7 @@ function parsePercent(value: string | undefined, flagName: string): number {
   return parsed;
 }
 
-function parseArgs(): CliArgs {
-  const args = process.argv.slice(2);
-
+export function parseArgsFrom(args: string[]): CliArgs {
   // Keep argument parsing intentionally simple because the script only supports
   // a small fixed set of flags and is meant to stay easy to audit.
   function flag(name: string): string | undefined {
@@ -71,11 +69,9 @@ function sleep(seconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, seconds * 1000));
 }
 
-function deployWeights(args: CliArgs, greenWeight: number): void {
+export function buildDeployCommand(args: CliArgs, greenWeight: number): string[] {
   const blueWeight = 100 - greenWeight;
-  // Every shift is just another backend deploy with new context values.
-  // That keeps the source of truth in CDK and avoids configuration drift.
-  const command = [
+  return [
     'cdk',
     'deploy',
     args.stackName,
@@ -86,6 +82,13 @@ function deployWeights(args: CliArgs, greenWeight: number): void {
     '--context',
     `greenTrafficWeight=${greenWeight}`,
   ];
+}
+
+function deployWeights(args: CliArgs, greenWeight: number): void {
+  const blueWeight = 100 - greenWeight;
+  // Every shift is just another backend deploy with new context values.
+  // That keeps the source of truth in CDK and avoids configuration drift.
+  const command = buildDeployCommand(args, greenWeight);
 
   console.log(
     `${args.dryRun ? '[DRY RUN] ' : ''}Deploying weights → blue: ${blueWeight}, green: ${greenWeight}`,
@@ -106,8 +109,8 @@ function deployWeights(args: CliArgs, greenWeight: number): void {
   }
 }
 
-async function main(): Promise<void> {
-  const args = parseArgs();
+export async function main(argv = process.argv.slice(2)): Promise<void> {
+  const args = parseArgsFrom(argv);
 
   if (args.intervalSeconds < 0 || !Number.isInteger(args.intervalSeconds)) {
     throw new Error('--interval-seconds must be a non-negative integer');
@@ -153,7 +156,9 @@ async function main(): Promise<void> {
   console.log(`Traffic shift complete. Green is now at ${args.targetGreenWeight}%.`);
 }
 
-main().catch((err: Error) => {
-  console.error('Fatal error:', err.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  void main().catch((err: Error) => {
+    console.error('Fatal error:', err.message);
+    process.exit(1);
+  });
+}

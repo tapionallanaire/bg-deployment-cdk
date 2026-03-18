@@ -1,6 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
 import * as cr from 'aws-cdk-lib/custom-resources';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 import {
@@ -23,13 +24,15 @@ import { NetworkStackProps } from '../types/stack-props';
  *
  * Exports (via CfnOutput / direct object references passed as BackendStackProps):
  *   - vpc
- *   - albSecurityGroup
+ *   - blueAlbSecurityGroup
+ *   - greenAlbSecurityGroup
  *   - ecsSecurityGroup
  *   - albLogBucket
  */
 export class NetworkStack extends cdk.Stack {
   public readonly vpc: ec2.Vpc;
-  public readonly albSecurityGroup: ec2.SecurityGroup;
+  public readonly blueAlbSecurityGroup: ec2.SecurityGroup;
+  public readonly greenAlbSecurityGroup: ec2.SecurityGroup;
   public readonly ecsSecurityGroup: ec2.SecurityGroup;
   public readonly albLogBucket: s3.Bucket;
 
@@ -66,38 +69,25 @@ export class NetworkStack extends cdk.Stack {
     });
 
     // ── Security groups ──────────────────────────────────────────────────────
-    // ALB SG: internet-facing, must accept HTTP and HTTPS from anywhere.
-    // Outbound is unrestricted on the ALB SG — restricting it to the ECS SG creates a
+    // ALB SGs: internet-facing, must accept HTTP and HTTPS from anywhere.
+    // Outbound is unrestricted on the ALB SGs — restricting them to the ECS SG creates a
     // CloudFormation circular dependency (ALB SG egress → ECS SG, ECS SG ingress → ALB SG).
     // The meaningful restriction is the ECS SG's inbound rule, which only allows traffic
-    // from this ALB SG. ALB outbound is effectively scoped to its registered targets anyway.
-    this.albSecurityGroup = new ec2.SecurityGroup(this, 'AlbSecurityGroup', {
-      vpc: this.vpc,
-      securityGroupName: `${prefix}-alb-sg`,
-      description: 'ALB - inbound HTTP/HTTPS from internet',
-      allowAllOutbound: true,
+    // from the color-specific ALB SGs. Separate SGs preserve blue/green isolation if a
+    // future deployment policy wants one color to be reachable differently from the other.
+    this.blueAlbSecurityGroup = this.createAlbSecurityGroup('BlueAlbSecurityGroup', {
+      prefix,
+      color: 'blue',
+    });
+    this.greenAlbSecurityGroup = this.createAlbSecurityGroup('GreenAlbSecurityGroup', {
+      prefix,
+      color: 'green',
     });
 
-    this.albSecurityGroup.addIngressRule(
-      ec2.Peer.anyIpv4(),
-      ec2.Port.tcp(ALB_HTTP_PORT),
-      'Allow HTTP from internet',
-    );
-
-    this.albSecurityGroup.addIngressRule(
-      ec2.Peer.anyIpv4(),
-      ec2.Port.tcp(ALB_HTTPS_PORT),
-      'Allow HTTPS from internet',
-    );
-
-    // ECS SG: private, must accept traffic from the ALB only on the container port.
-    // Egress: allow VPC-local HTTPS plus DNS to the VPC resolver. Fargate uses the
-    // AmazonProvidedDNS link-local address for name resolution, so both the VPC CIDR
-    // and the resolver /32 are allowed explicitly.
     this.ecsSecurityGroup = new ec2.SecurityGroup(this, 'EcsSecurityGroup', {
       vpc: this.vpc,
       securityGroupName: `${prefix}-ecs-sg`,
-      description: 'ECS Fargate tasks - inbound from ALB SG only, outbound HTTPS for ECR',
+      description: 'ECS Fargate tasks - inbound from ALB SGs only, outbound HTTPS for ECR',
       allowAllOutbound: false,
     });
 
@@ -105,13 +95,25 @@ export class NetworkStack extends cdk.Stack {
       vpc: this.vpc,
       securityGroupName: `${prefix}-vpce-sg`,
       description: 'Allows ECS tasks to reach PrivateLink endpoints over HTTPS',
-      allowAllOutbound: true,
+      allowAllOutbound: false,
     });
 
     this.ecsSecurityGroup.addIngressRule(
-      ec2.Peer.securityGroupId(this.albSecurityGroup.securityGroupId),
+      ec2.Peer.securityGroupId(this.blueAlbSecurityGroup.securityGroupId),
       ec2.Port.tcp(ctx.ecsContainerPort),
-      'Allow traffic from ALB only',
+      'Allow traffic from blue ALB only',
+    );
+
+    this.ecsSecurityGroup.addIngressRule(
+      ec2.Peer.securityGroupId(this.greenAlbSecurityGroup.securityGroupId),
+      ec2.Port.tcp(ctx.ecsContainerPort),
+      'Allow traffic from green ALB only',
+    );
+
+    endpointSecurityGroup.addIngressRule(
+      ec2.Peer.securityGroupId(this.ecsSecurityGroup.securityGroupId),
+      ec2.Port.tcp(OUTBOUND_HTTPS_PORT),
+      'Allow HTTPS from ECS tasks only',
     );
 
     this.ecsSecurityGroup.addEgressRule(
@@ -171,9 +173,12 @@ export class NetworkStack extends cdk.Stack {
           `s3-prefix-list-${cdk.Stack.of(this).region}`,
         ),
       },
-      policy: cr.AwsCustomResourcePolicy.fromSdkCalls({
-        resources: cr.AwsCustomResourcePolicy.ANY_RESOURCE,
-      }),
+      policy: cr.AwsCustomResourcePolicy.fromStatements([
+        new iam.PolicyStatement({
+          actions: ['ec2:DescribeManagedPrefixLists'],
+          resources: ['*'],
+        }),
+      ]),
     });
 
     const s3PrefixListEgress = new ec2.CfnSecurityGroupEgress(this, 'EcsSecurityGroupS3Egress', {
@@ -185,7 +190,12 @@ export class NetworkStack extends cdk.Stack {
       description: 'Allow HTTPS outbound to the S3 managed prefix list for ECR layer downloads',
     });
 
-    s3PrefixListEgress.addDependency(s3GatewayEndpoint.node.defaultChild as ec2.CfnVPCEndpoint);
+    const cfnS3GatewayEndpoint = s3GatewayEndpoint.node.defaultChild;
+    if (!(cfnS3GatewayEndpoint instanceof ec2.CfnVPCEndpoint)) {
+      throw new Error('Expected the S3 gateway endpoint default child to be a CfnVPCEndpoint.');
+    }
+
+    s3PrefixListEgress.addDependency(cfnS3GatewayEndpoint);
 
     this.vpc.addInterfaceEndpoint('EcrApiEndpoint', {
       service: ec2.InterfaceVpcEndpointAwsService.ECR,
@@ -240,5 +250,31 @@ export class NetworkStack extends cdk.Stack {
       exportName: `${prefix}-alb-log-bucket`,
       value: this.albLogBucket.bucketName,
     });
+  }
+
+  private createAlbSecurityGroup(
+    id: string,
+    props: { prefix: string; color: 'blue' | 'green' },
+  ): ec2.SecurityGroup {
+    const securityGroup = new ec2.SecurityGroup(this, id, {
+      vpc: this.vpc,
+      securityGroupName: `${props.prefix}-${props.color}-alb-sg`,
+      description: `${props.color} ALB - inbound HTTP/HTTPS from internet`,
+      allowAllOutbound: true,
+    });
+
+    securityGroup.addIngressRule(
+      ec2.Peer.anyIpv4(),
+      ec2.Port.tcp(ALB_HTTP_PORT),
+      `Allow HTTP to the ${props.color} ALB from internet`,
+    );
+
+    securityGroup.addIngressRule(
+      ec2.Peer.anyIpv4(),
+      ec2.Port.tcp(ALB_HTTPS_PORT),
+      `Allow HTTPS to the ${props.color} ALB from internet`,
+    );
+
+    return securityGroup;
   }
 }

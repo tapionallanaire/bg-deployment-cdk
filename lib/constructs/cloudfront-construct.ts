@@ -109,13 +109,13 @@ export class CloudFrontConstruct extends Construct {
           httpStatus: 403,
           responseHttpStatus: 200,
           responsePagePath: '/index.html',
-          ttl: cdk.Duration.seconds(0),
+          ttl: cdk.Duration.seconds(30),
         },
         {
           httpStatus: 404,
           responseHttpStatus: 200,
           responsePagePath: '/index.html',
-          ttl: cdk.Duration.seconds(0),
+          ttl: cdk.Duration.seconds(30),
         },
       ],
     });
@@ -164,7 +164,7 @@ export class CloudFrontConstruct extends Construct {
     new cdk.CfnOutput(cdk.Stack.of(this), 'FrontendBucket', {
       exportName: `${prefix}-frontend-bucket`,
       value: this.bucket.bucketName,
-      description: 'S3 bucket — sync static assets here after build',
+      description: 'S3 bucket that stores the deployed static frontend assets',
     });
   }
 }

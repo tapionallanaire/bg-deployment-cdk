@@ -145,6 +145,13 @@ function numberContext(node: Node, key: string, defaultValue: number): number {
  * rather than surfacing runtime CloudFormation errors during deploy.
  */
 export function resolveContext(node: Node, env: cdk.Environment): AppContext {
+  if (!env.account || !env.region) {
+    throw new Error(
+      'CDK_DEFAULT_ACCOUNT and CDK_DEFAULT_REGION must be set. ' +
+        'Run `aws configure` and `cdk bootstrap` first, or set them explicitly.',
+    );
+  }
+
   const appName = requireContext(node, 'appName');
   const environment = requireContext(node, 'environment');
   const blueTrafficWeight = numberContext(node, 'blueTrafficWeight', 100);
@@ -162,13 +169,12 @@ export function resolveContext(node: Node, env: cdk.Environment): AppContext {
 
   const ecsGreenContainerImage =
     optionalContext(node, 'ecsGreenContainerImage') ?? ecsBlueContainerImage;
-  const ecsImageSource = (optionalContext(node, 'ecsImageSource') ?? 'asset') as
-    | 'asset'
-    | 'registry';
+  const ecsImageSourceRaw = optionalContext(node, 'ecsImageSource') ?? 'asset';
 
-  if (ecsImageSource !== 'asset' && ecsImageSource !== 'registry') {
-    throw new Error(`ecsImageSource must be 'asset' or 'registry', got: "${ecsImageSource}"`);
+  if (ecsImageSourceRaw !== 'asset' && ecsImageSourceRaw !== 'registry') {
+    throw new Error(`ecsImageSource must be 'asset' or 'registry', got: "${ecsImageSourceRaw}"`);
   }
+  const ecsImageSource: AppContext['ecsImageSource'] = ecsImageSourceRaw;
 
   if (blueTrafficWeight + greenTrafficWeight !== 100) {
     throw new Error(
@@ -215,8 +221,8 @@ export function resolveContext(node: Node, env: cdk.Environment): AppContext {
   return {
     appName,
     environment,
-    account: env.account!,
-    region: env.region!,
+    account: env.account,
+    region: env.region,
     vpcMaxAzs: numberContext(node, 'vpcMaxAzs', 2),
     vpcNatGateways: numberContext(node, 'vpcNatGateways', 1),
     ecsBlueContainerImage,

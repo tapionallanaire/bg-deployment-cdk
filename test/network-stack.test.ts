@@ -10,6 +10,27 @@ function buildTemplate(): Template {
   return Template.fromStack(stack);
 }
 
+type SecurityGroupResource = {
+  Properties?: {
+    GroupDescription?: string;
+    SecurityGroupIngress?: Array<Record<string, unknown>>;
+    SecurityGroupEgress?: Array<Record<string, unknown>>;
+  };
+};
+
+function findSecurityGroup(
+  template: Template,
+  descriptionFragment: string,
+): SecurityGroupResource | undefined {
+  const resources = template.findResources('AWS::EC2::SecurityGroup');
+
+  return Object.values(resources).find((resource) =>
+    ((resource as SecurityGroupResource).Properties?.GroupDescription ?? '').includes(
+      descriptionFragment,
+    ),
+  ) as SecurityGroupResource | undefined;
+}
+
 describe('NetworkStack', () => {
   let template: Template;
 
@@ -32,40 +53,47 @@ describe('NetworkStack', () => {
     template.resourceCountIs('AWS::EC2::NatGateway', 1);
   });
 
-  it('ALB security group allows inbound HTTP and HTTPS from anywhere', () => {
-    template.hasResourceProperties('AWS::EC2::SecurityGroup', {
-      SecurityGroupIngress: Match.arrayWith([
-        Match.objectLike({ FromPort: 80, ToPort: 80, IpProtocol: 'tcp', CidrIp: '0.0.0.0/0' }),
-        Match.objectLike({ FromPort: 443, ToPort: 443, IpProtocol: 'tcp', CidrIp: '0.0.0.0/0' }),
-      ]),
-    });
+  it('creates separate blue and green ALB security groups with public HTTP/HTTPS ingress', () => {
+    const blueAlbSg = findSecurityGroup(template, 'blue ALB');
+    const greenAlbSg = findSecurityGroup(template, 'green ALB');
+
+    expect(blueAlbSg).toBeDefined();
+    expect(greenAlbSg).toBeDefined();
+
+    for (const albSg of [blueAlbSg, greenAlbSg]) {
+      expect(albSg?.Properties?.SecurityGroupIngress).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            FromPort: 80,
+            ToPort: 80,
+            IpProtocol: 'tcp',
+            CidrIp: '0.0.0.0/0',
+          }),
+          expect.objectContaining({
+            FromPort: 443,
+            ToPort: 443,
+            IpProtocol: 'tcp',
+            CidrIp: '0.0.0.0/0',
+          }),
+        ]),
+      );
+    }
   });
 
-  it('ECS security group allows inbound only from the ALB security group (no open CIDR)', () => {
-    // Find the ECS SG — it must have a SourceSecurityGroupId, not a CidrIp, for its ingress rule.
-    const sgResources = template.findResources('AWS::EC2::SecurityGroup');
-
-    const ecsSg = Object.values(sgResources).find((sg) => {
-      const ingress: Array<Record<string, unknown>> =
-        (sg as { Properties: { SecurityGroupIngress: Array<Record<string, unknown>> } })
-          .Properties?.SecurityGroupIngress ?? [];
-      return ingress.some((rule) => 'SourceSecurityGroupId' in rule && !('CidrIp' in rule));
-    });
+  it('ECS security group allows inbound only from the two ALB security groups (no open CIDR)', () => {
+    const ecsSg = findSecurityGroup(template, 'ECS Fargate tasks');
 
     expect(ecsSg).toBeDefined();
+
+    const ingress = ecsSg?.Properties?.SecurityGroupIngress ?? [];
+    expect(ingress).toHaveLength(2);
+    expect(
+      ingress.every((rule) => 'SourceSecurityGroupId' in rule && !('CidrIp' in rule)),
+    ).toBe(true);
   });
 
   it('ECS security group does not allow HTTPS egress to 0.0.0.0/0', () => {
-    const sgResources = template.findResources('AWS::EC2::SecurityGroup');
-
-    const ecsSg = Object.values(sgResources).find((sg) => {
-      const ingress: Array<Record<string, unknown>> =
-        (sg as { Properties: { SecurityGroupIngress: Array<Record<string, unknown>> } })
-          .Properties?.SecurityGroupIngress ?? [];
-      return ingress.some((rule) => 'SourceSecurityGroupId' in rule && !('CidrIp' in rule));
-    }) as
-      | { Properties?: { SecurityGroupEgress?: Array<Record<string, unknown>> } }
-      | undefined;
+    const ecsSg = findSecurityGroup(template, 'ECS Fargate tasks');
 
     expect(ecsSg).toBeDefined();
 
@@ -82,16 +110,7 @@ describe('NetworkStack', () => {
   });
 
   it('ECS security group allows DNS egress to AmazonProvidedDNS', () => {
-    const sgResources = template.findResources('AWS::EC2::SecurityGroup');
-
-    const ecsSg = Object.values(sgResources).find((sg) => {
-      const ingress: Array<Record<string, unknown>> =
-        (sg as { Properties: { SecurityGroupIngress: Array<Record<string, unknown>> } })
-          .Properties?.SecurityGroupIngress ?? [];
-      return ingress.some((rule) => 'SourceSecurityGroupId' in rule && !('CidrIp' in rule));
-    }) as
-      | { Properties?: { SecurityGroupEgress?: Array<Record<string, unknown>> } }
-      | undefined;
+    const ecsSg = findSecurityGroup(template, 'ECS Fargate tasks');
 
     expect(ecsSg).toBeDefined();
 
@@ -111,12 +130,52 @@ describe('NetworkStack', () => {
     template.resourceCountIs('AWS::EC2::VPCEndpoint', 4);
   });
 
+  it('interface endpoint security group only allows inbound HTTPS from ECS tasks', () => {
+    const endpointSg = findSecurityGroup(template, 'PrivateLink endpoints');
+
+    expect(endpointSg).toBeDefined();
+    expect(endpointSg?.Properties?.SecurityGroupIngress).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          FromPort: 443,
+          ToPort: 443,
+          IpProtocol: 'tcp',
+          SourceSecurityGroupId: expect.anything(),
+        }),
+      ]),
+    );
+
+    const egress = endpointSg?.Properties?.SecurityGroupEgress ?? [];
+    const hasUsableOutboundRule = egress.some(
+      (rule) =>
+        rule.IpProtocol !== 'icmp' ||
+        rule.CidrIp !== '255.255.255.255/32' ||
+        rule.Description !== 'Disallow all traffic',
+    );
+
+    expect(hasUsableOutboundRule).toBe(false);
+  });
+
   it('allows HTTPS egress to the S3 managed prefix list for ECR layer downloads', () => {
     template.hasResourceProperties('AWS::EC2::SecurityGroupEgress', {
       IpProtocol: 'tcp',
       FromPort: 443,
       ToPort: 443,
       DestinationPrefixListId: Match.anyValue(),
+    });
+  });
+
+  it('uses a least-privilege IAM policy for the S3 prefix list lookup', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: 'ec2:DescribeManagedPrefixLists',
+            Effect: 'Allow',
+            Resource: '*',
+          }),
+        ]),
+      },
     });
   });
 

@@ -168,7 +168,10 @@ export class BlueGreenService extends Construct {
         unhealthyThresholdCount: HEALTH_CHECK_UNHEALTHY_COUNT,
         healthyHttpCodes: '200-299',
       },
-      deregistrationDelay: cdk.Duration.seconds(30),
+      // Keep a short but non-trivial drain period so rolling replacements have
+      // time to finish in-flight requests without keeping old tasks around for
+      // the full ALB default of 300 seconds.
+      deregistrationDelay: cdk.Duration.seconds(60),
     });
 
     this.service.attachToApplicationTargetGroup(this.targetGroup);

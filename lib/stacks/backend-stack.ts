@@ -33,7 +33,14 @@ export class BackendStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: BackendStackProps) {
     super(scope, id, props);
 
-    const { ctx, vpc, albSecurityGroup, ecsSecurityGroup, albLogBucket } = props;
+    const {
+      ctx,
+      vpc,
+      blueAlbSecurityGroup,
+      greenAlbSecurityGroup,
+      ecsSecurityGroup,
+      albLogBucket,
+    } = props;
     const prefix = `${ctx.appName}-${ctx.environment}`;
     const dockerAssetPath = path.join(__dirname, '../../docker/backend');
 
@@ -97,7 +104,7 @@ export class BackendStack extends cdk.Stack {
       color: 'blue',
       prefix,
       vpc,
-      securityGroup: albSecurityGroup,
+      securityGroup: blueAlbSecurityGroup,
       logBucket: albLogBucket,
       targetGroup: blueService.targetGroup,
       certificateArn: ctx.certificateArn,
@@ -107,7 +114,7 @@ export class BackendStack extends cdk.Stack {
       color: 'green',
       prefix,
       vpc,
-      securityGroup: albSecurityGroup,
+      securityGroup: greenAlbSecurityGroup,
       logBucket: albLogBucket,
       targetGroup: greenService.targetGroup,
       certificateArn: ctx.certificateArn,
