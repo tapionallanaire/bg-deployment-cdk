@@ -15,13 +15,6 @@ const env: cdk.Environment = {
   region: process.env.CDK_DEFAULT_REGION,
 };
 
-if (!env.account || !env.region) {
-  throw new Error(
-    'CDK_DEFAULT_ACCOUNT and CDK_DEFAULT_REGION must be set. ' +
-      'Run `aws configure` and `cdk bootstrap` first, or set them explicitly.',
-  );
-}
-
 // Resolve and validate all context parameters once at synth time.
 // Fails fast with a clear error before any CloudFormation is generated.
 const ctx = resolveContext(app.node, env);
@@ -39,7 +32,8 @@ const backendStack = new BackendStack(app, `${stackPrefix}-backend`, {
   env,
   ctx,
   vpc: networkStack.vpc,
-  albSecurityGroup: networkStack.albSecurityGroup,
+  blueAlbSecurityGroup: networkStack.blueAlbSecurityGroup,
+  greenAlbSecurityGroup: networkStack.greenAlbSecurityGroup,
   ecsSecurityGroup: networkStack.ecsSecurityGroup,
   albLogBucket: networkStack.albLogBucket,
   description: 'ECS Fargate blue/green services, ALB, and CloudWatch observability',

@@ -27,6 +27,13 @@ export interface AppContext {
   readonly ecsBlueContainerImage: string;
   /** Docker image for the green service (ECR URI or public image). */
   readonly ecsGreenContainerImage: string;
+  /**
+   * Image source mode for ECS tasks.
+   * 'asset' builds a local Docker asset and pushes it to private ECR via CDK.
+   * 'registry' pulls the image directly from the configured registry URI.
+   * Default: 'asset'.
+   */
+  readonly ecsImageSource: 'asset' | 'registry';
   /** Container TCP port exposed by the application. Default: 80. */
   readonly ecsContainerPort: number;
   /** Fargate task CPU units. Default: 512 (0.5 vCPU). */
@@ -138,6 +145,13 @@ function numberContext(node: Node, key: string, defaultValue: number): number {
  * rather than surfacing runtime CloudFormation errors during deploy.
  */
 export function resolveContext(node: Node, env: cdk.Environment): AppContext {
+  if (!env.account || !env.region) {
+    throw new Error(
+      'CDK_DEFAULT_ACCOUNT and CDK_DEFAULT_REGION must be set. ' +
+        'Run `aws configure` and `cdk bootstrap` first, or set them explicitly.',
+    );
+  }
+
   const appName = requireContext(node, 'appName');
   const environment = requireContext(node, 'environment');
   const blueTrafficWeight = numberContext(node, 'blueTrafficWeight', 100);
@@ -155,6 +169,12 @@ export function resolveContext(node: Node, env: cdk.Environment): AppContext {
 
   const ecsGreenContainerImage =
     optionalContext(node, 'ecsGreenContainerImage') ?? ecsBlueContainerImage;
+  const ecsImageSourceRaw = optionalContext(node, 'ecsImageSource') ?? 'asset';
+
+  if (ecsImageSourceRaw !== 'asset' && ecsImageSourceRaw !== 'registry') {
+    throw new Error(`ecsImageSource must be 'asset' or 'registry', got: "${ecsImageSourceRaw}"`);
+  }
+  const ecsImageSource: AppContext['ecsImageSource'] = ecsImageSourceRaw;
 
   if (blueTrafficWeight + greenTrafficWeight !== 100) {
     throw new Error(
@@ -201,12 +221,13 @@ export function resolveContext(node: Node, env: cdk.Environment): AppContext {
   return {
     appName,
     environment,
-    account: env.account!,
-    region: env.region!,
+    account: env.account,
+    region: env.region,
     vpcMaxAzs: numberContext(node, 'vpcMaxAzs', 2),
     vpcNatGateways: numberContext(node, 'vpcNatGateways', 1),
     ecsBlueContainerImage,
     ecsGreenContainerImage,
+    ecsImageSource,
     ecsContainerPort: numberContext(node, 'ecsContainerPort', 80),
     ecsCpu: numberContext(node, 'ecsCpu', 512),
     ecsMemoryMiB: numberContext(node, 'ecsMemoryMiB', 1024),

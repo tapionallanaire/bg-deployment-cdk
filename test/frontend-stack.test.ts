@@ -87,6 +87,25 @@ describe('FrontendStack', () => {
     template.resourceCountIs('AWS::CloudFront::OriginAccessControl', 1);
   });
 
+  it('bucket policy grants read access only to the CloudFront service principal', () => {
+    template.hasResourceProperties('AWS::S3::BucketPolicy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: 's3:GetObject',
+            Principal: { Service: 'cloudfront.amazonaws.com' },
+            Effect: 'Allow',
+            Condition: Match.objectLike({
+              StringEquals: Match.objectLike({
+                'AWS:SourceArn': Match.anyValue(),
+              }),
+            }),
+          }),
+        ]),
+      },
+    });
+  });
+
   it('does not create a Route 53 record when no custom domain is configured', () => {
     template.resourceCountIs('AWS::Route53::RecordSet', 0);
   });
@@ -117,8 +136,18 @@ describe('FrontendStack', () => {
     template.hasResourceProperties('AWS::CloudFront::Distribution', {
       DistributionConfig: Match.objectLike({
         CustomErrorResponses: Match.arrayWith([
-          Match.objectLike({ ErrorCode: 403, ResponseCode: 200, ResponsePagePath: '/index.html' }),
-          Match.objectLike({ ErrorCode: 404, ResponseCode: 200, ResponsePagePath: '/index.html' }),
+          Match.objectLike({
+            ErrorCode: 403,
+            ResponseCode: 200,
+            ResponsePagePath: '/index.html',
+            ErrorCachingMinTTL: 30,
+          }),
+          Match.objectLike({
+            ErrorCode: 404,
+            ResponseCode: 200,
+            ResponsePagePath: '/index.html',
+            ErrorCachingMinTTL: 30,
+          }),
         ]),
       }),
     });

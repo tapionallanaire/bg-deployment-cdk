@@ -11,8 +11,10 @@ export interface BackendStackProps extends cdk.StackProps {
   readonly ctx: AppContext;
   /** VPC created by NetworkStack. */
   readonly vpc: ec2.IVpc;
-  /** Security group for the ALB — allows inbound 80/443 from the internet. */
-  readonly albSecurityGroup: ec2.ISecurityGroup;
+  /** Security group for the blue ALB — allows inbound 80/443 from the internet. */
+  readonly blueAlbSecurityGroup: ec2.ISecurityGroup;
+  /** Security group for the green ALB — allows inbound 80/443 from the internet. */
+  readonly greenAlbSecurityGroup: ec2.ISecurityGroup;
   /** Security group for ECS tasks — allows inbound only from the ALB SG. */
   readonly ecsSecurityGroup: ec2.ISecurityGroup;
   /** S3 bucket receiving ALB access logs, created in NetworkStack. */

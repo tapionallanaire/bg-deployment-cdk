@@ -1,11 +1,13 @@
 import * as cdk from 'aws-cdk-lib';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
+import * as ecrassets from 'aws-cdk-lib/aws-ecr-assets';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53targets from 'aws-cdk-lib/aws-route53-targets';
 import * as sns from 'aws-cdk-lib/aws-sns';
+import * as path from 'node:path';
 import { Construct } from 'constructs';
 import { AlbConstruct } from '../constructs/alb-construct';
 import { BlueGreenService } from '../constructs/blue-green-service';
@@ -31,8 +33,36 @@ export class BackendStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: BackendStackProps) {
     super(scope, id, props);
 
-    const { ctx, vpc, albSecurityGroup, ecsSecurityGroup, albLogBucket } = props;
+    const {
+      ctx,
+      vpc,
+      blueAlbSecurityGroup,
+      greenAlbSecurityGroup,
+      ecsSecurityGroup,
+      albLogBucket,
+    } = props;
     const prefix = `${ctx.appName}-${ctx.environment}`;
+    const dockerAssetPath = path.join(__dirname, '../../docker/backend');
+
+    const resolveContainerImage = (
+      color: 'blue' | 'green',
+      baseImage: string,
+    ): ecs.ContainerImage => {
+      if (ctx.ecsImageSource === 'registry') {
+        return ecs.ContainerImage.fromRegistry(baseImage);
+      }
+
+      return ecs.ContainerImage.fromAsset(dockerAssetPath, {
+        buildArgs: {
+          BASE_IMAGE: baseImage,
+          DEPLOYMENT_COLOR: color,
+        },
+        // Fargate defaults to x86_64 in this stack. Force the Docker asset to the
+        // same target platform so Apple Silicon local builds do not produce arm64 images
+        // that fail at runtime with "exec format error".
+        platform: ecrassets.Platform.LINUX_AMD64,
+      });
+    };
 
     const cluster = new ecs.Cluster(this, 'Cluster', {
       clusterName: `${prefix}-cluster`,
@@ -45,7 +75,7 @@ export class BackendStack extends cdk.Stack {
       cluster,
       vpc,
       securityGroup: ecsSecurityGroup,
-      containerImage: ctx.ecsBlueContainerImage,
+      containerImage: resolveContainerImage('blue', ctx.ecsBlueContainerImage),
       containerPort: ctx.ecsContainerPort,
       cpu: ctx.ecsCpu,
       memoryMiB: ctx.ecsMemoryMiB,
@@ -60,7 +90,7 @@ export class BackendStack extends cdk.Stack {
       cluster,
       vpc,
       securityGroup: ecsSecurityGroup,
-      containerImage: ctx.ecsGreenContainerImage,
+      containerImage: resolveContainerImage('green', ctx.ecsGreenContainerImage),
       containerPort: ctx.ecsContainerPort,
       cpu: ctx.ecsCpu,
       memoryMiB: ctx.ecsMemoryMiB,
@@ -74,7 +104,7 @@ export class BackendStack extends cdk.Stack {
       color: 'blue',
       prefix,
       vpc,
-      securityGroup: albSecurityGroup,
+      securityGroup: blueAlbSecurityGroup,
       logBucket: albLogBucket,
       targetGroup: blueService.targetGroup,
       certificateArn: ctx.certificateArn,
@@ -84,7 +114,7 @@ export class BackendStack extends cdk.Stack {
       color: 'green',
       prefix,
       vpc,
-      securityGroup: albSecurityGroup,
+      securityGroup: greenAlbSecurityGroup,
       logBucket: albLogBucket,
       targetGroup: greenService.targetGroup,
       certificateArn: ctx.certificateArn,

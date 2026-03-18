@@ -61,7 +61,7 @@ export class AlbConstruct extends Construct {
         port: ALB_HTTPS_PORT,
         protocol: elbv2.ApplicationProtocol.HTTPS,
         certificates: [certificate],
-        sslPolicy: elbv2.SslPolicy.RECOMMENDED_TLS,
+        sslPolicy: elbv2.SslPolicy.FORWARD_SECRECY_TLS12_RES,
         defaultTargetGroups: [targetGroup],
       });
 
