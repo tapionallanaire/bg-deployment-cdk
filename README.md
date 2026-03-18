@@ -1,6 +1,6 @@
 # Blue/Green Deployment Pipeline — AWS CDK (TypeScript)
 
-I built this repository as a small but fully automated blue/green deployment setup in AWS CDK. The backend runs on ECS Fargate, the frontend is served from S3 through CloudFront, and the whole point of the design is that nothing depends on clicking around in the AWS console. If I need to change traffic, capacity, or a deployment version, I want that change to live in CDK context and be applied with `cdk deploy`.
+This repository implements a small but fully automated blue/green deployment setup in AWS CDK. The backend runs on ECS Fargate, the frontend is served from S3 through CloudFront, and the design goal is to keep all infrastructure changes in code rather than in the AWS console. Traffic changes, capacity changes, and deployment version changes are all intended to flow through CDK context and `cdk deploy`.
 
 ## How to Deploy from Scratch
 
@@ -18,11 +18,11 @@ cd bg-deployment-cdk
 npm install
 ```
 
-If I want a simple local shell setup, I can copy `.env.example` to `.env` and source it before running AWS or CDK commands. I kept this optional and documented it clearly because the project does not auto-load `.env`.
+If a simple local shell setup is useful, `.env.example` can be copied to `.env` and sourced before running AWS or CDK commands. This is optional and documented explicitly because the project does not auto-load `.env`.
 
-The repository already includes a working default context in `cdk.json`, so the checked-in stack names are `bg-app-dev-network`, `bg-app-dev-backend`, and `bg-app-dev-frontend`. In this project, stack names always follow the pattern `<appName>-<environment>-<stack>`. If I change `appName` or `environment`, I also need to change the commands below to match, and `cdk ls` is the quickest way to confirm the exact names.
+The repository already includes a working default context in `cdk.json`, so the checked-in stack names are `bg-app-dev-network`, `bg-app-dev-backend`, and `bg-app-dev-frontend`. Stack names always follow the pattern `<appName>-<environment>-<stack>`. If `appName` or `environment` is changed, the commands below need to be updated to match, and `cdk ls` is the quickest way to confirm the exact names.
 
-If I want to customize the deployment, the most important context values are the application name, the environment name, and the blue and green images. If I want the full Route 53 weighted backend routing flow, I also set the hosted zone values and backend hostname. That path is implemented in CDK, but it only becomes testable when a real hosted zone and backend hostname are available in the target account.
+To customize the deployment, the most important context values are the application name, the environment name, and the blue and green images. The full Route 53 weighted backend routing flow also requires the hosted zone values and backend hostname. That path is implemented in CDK, but it only becomes testable when a real hosted zone and backend hostname are available in the target account.
 
 ```json
 {
@@ -38,22 +38,22 @@ If I want to customize the deployment, the most important context values are the
 }
 ```
 
-If I want HTTPS on the backend, I also set `certificateArn`. If I want a frontend custom domain, I set `customDomainName`, `frontendCertificateArn`, `frontendHostedZoneId`, and `frontendHostedZoneName`. If I am treating the environment as persistent rather than disposable, I set `removalPolicy` to `RETAIN`.
+If HTTPS is needed on the backend, `certificateArn` should also be set. If a frontend custom domain is needed, `customDomainName`, `frontendCertificateArn`, `frontendHostedZoneId`, and `frontendHostedZoneName` should also be set. If the environment is being treated as persistent rather than disposable, `removalPolicy` should be set to `RETAIN`.
 
-Before deploying anything, I run the tests. These are CDK assertion tests, so they do not deploy resources or call AWS APIs.
+Before deploying anything, the tests should be run. These are CDK assertion tests, so they do not deploy resources or call AWS APIs.
 
 ```bash
 npm test
 ```
 
-Then I synthesize the stacks locally so I can review the generated templates.
+The stacks can then be synthesized locally so the generated templates can be reviewed.
 
 ```bash
 cdk synth
 cdk ls
 ```
 
-Once that looks right, I deploy either everything or each stack individually.
+Once that looks right, either all stacks or each stack individually can be deployed.
 
 ```bash
 CDK_DEFAULT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text) \
@@ -69,6 +69,18 @@ cdk deploy bg-app-dev-frontend
 
 The frontend stack deploys the checked-in static site from `frontend-site/` into the S3 bucket and invalidates CloudFront as part of the same CDK deployment, so there is no separate `s3 sync` step.
 
+## How to Clean Up
+
+After everything has been verified, the stacks can be removed in reverse dependency order.
+
+```bash
+cdk destroy bg-app-dev-frontend bg-app-dev-backend bg-app-dev-network --force
+```
+
+If the context is changed and the stack names are different, `cdk ls` is the quickest way to confirm the exact names before destroying them.
+
+The S3 buckets follow the configured `removalPolicy`, so in the default dev configuration they are destroyed automatically. The ECS CloudWatch log groups are intentionally retained even when the stacks are deleted, so they should only be removed manually if that history is no longer needed.
+
 ## How to Switch from Blue to Green
 
 The blue/green mechanism applies to the backend only. The frontend is a static S3 and CloudFront delivery path and is deployed independently as a normal static site update.
@@ -83,7 +95,7 @@ cdk deploy bg-app-dev-backend \
   --context greenTrafficWeight=0
 ```
 
-Once green is healthy, I can cut traffic over completely.
+Once green is healthy, traffic can be cut over completely.
 
 ```bash
 cdk deploy bg-app-dev-backend \
@@ -91,9 +103,9 @@ cdk deploy bg-app-dev-backend \
   --context greenTrafficWeight=100
 ```
 
-That cutover only affects traffic that arrives through the shared Route 53 record. If I test the blue or green ALB DNS names directly, I will still hit those ALBs directly, which is expected. In the exercise account I used for this submission, I validated the blue and green ALBs independently, but I did not validate Route 53 cutover end to end because I did not have a hosted zone and backend hostname available.
+That cutover only affects traffic that arrives through the shared Route 53 record. If the blue or green ALB DNS names are tested directly, those requests will still go straight to those ALBs, which is expected. In the exercise account used for this submission, the blue and green ALBs were validated independently, but Route 53 cutover was not validated end to end because a hosted zone and backend hostname were not available.
 
-If I want to scale blue down after the new version has had time to soak, I do that with another backend deploy.
+If blue should be scaled down after the new version has had time to soak, that can be done with another backend deploy.
 
 ```bash
 cdk deploy bg-app-dev-backend \
