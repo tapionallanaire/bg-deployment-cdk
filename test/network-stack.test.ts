@@ -55,6 +55,71 @@ describe('NetworkStack', () => {
     expect(ecsSg).toBeDefined();
   });
 
+  it('ECS security group does not allow HTTPS egress to 0.0.0.0/0', () => {
+    const sgResources = template.findResources('AWS::EC2::SecurityGroup');
+
+    const ecsSg = Object.values(sgResources).find((sg) => {
+      const ingress: Array<Record<string, unknown>> =
+        (sg as { Properties: { SecurityGroupIngress: Array<Record<string, unknown>> } })
+          .Properties?.SecurityGroupIngress ?? [];
+      return ingress.some((rule) => 'SourceSecurityGroupId' in rule && !('CidrIp' in rule));
+    }) as
+      | { Properties?: { SecurityGroupEgress?: Array<Record<string, unknown>> } }
+      | undefined;
+
+    expect(ecsSg).toBeDefined();
+
+    const egress = ecsSg?.Properties?.SecurityGroupEgress ?? [];
+    const hasOpenHttpsEgress = egress.some(
+      (rule) =>
+        rule.CidrIp === '0.0.0.0/0' &&
+        rule.IpProtocol === 'tcp' &&
+        rule.FromPort === 443 &&
+        rule.ToPort === 443,
+    );
+
+    expect(hasOpenHttpsEgress).toBe(false);
+  });
+
+  it('ECS security group allows DNS egress to AmazonProvidedDNS', () => {
+    const sgResources = template.findResources('AWS::EC2::SecurityGroup');
+
+    const ecsSg = Object.values(sgResources).find((sg) => {
+      const ingress: Array<Record<string, unknown>> =
+        (sg as { Properties: { SecurityGroupIngress: Array<Record<string, unknown>> } })
+          .Properties?.SecurityGroupIngress ?? [];
+      return ingress.some((rule) => 'SourceSecurityGroupId' in rule && !('CidrIp' in rule));
+    }) as
+      | { Properties?: { SecurityGroupEgress?: Array<Record<string, unknown>> } }
+      | undefined;
+
+    expect(ecsSg).toBeDefined();
+
+    const egress = ecsSg?.Properties?.SecurityGroupEgress ?? [];
+    const hasResolverDnsRule = egress.some(
+      (rule) =>
+        rule.CidrIp === '169.254.169.253/32' &&
+        rule.IpProtocol === 'udp' &&
+        rule.FromPort === 53 &&
+        rule.ToPort === 53,
+    );
+
+    expect(hasResolverDnsRule).toBe(true);
+  });
+
+  it('creates VPC endpoints needed for private ECS image pulls and logging', () => {
+    template.resourceCountIs('AWS::EC2::VPCEndpoint', 4);
+  });
+
+  it('allows HTTPS egress to the S3 managed prefix list for ECR layer downloads', () => {
+    template.hasResourceProperties('AWS::EC2::SecurityGroupEgress', {
+      IpProtocol: 'tcp',
+      FromPort: 443,
+      ToPort: 443,
+      DestinationPrefixListId: Match.anyValue(),
+    });
+  });
+
   it('ALB log S3 bucket has all public access blocked', () => {
     template.hasResourceProperties('AWS::S3::Bucket', {
       PublicAccessBlockConfiguration: {

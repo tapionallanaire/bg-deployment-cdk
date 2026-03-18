@@ -16,6 +16,7 @@ export const DEFAULT_CONTEXT: Record<string, unknown> = {
   vpcNatGateways: 1,
   ecsBlueContainerImage: 'public.ecr.aws/docker/library/nginx:1.27-alpine',
   ecsGreenContainerImage: 'public.ecr.aws/docker/library/nginx:1.27-alpine',
+  ecsImageSource: 'asset',
   ecsContainerPort: 80,
   ecsCpu: 512,
   ecsMemoryMiB: 1024,
@@ -27,9 +28,6 @@ export const DEFAULT_CONTEXT: Record<string, unknown> = {
   albLogRetentionDays: 90,
   alarm5xxRateThresholdPercent: 5,
   healthCheckPath: '/',
-  hostedZoneId: 'Z1234567890ABC',
-  hostedZoneName: 'example.com',
-  albDomainName: 'api.example.com',
   removalPolicy: 'DESTROY',
   cloudFrontPriceClass: 'PriceClass_100',
 };

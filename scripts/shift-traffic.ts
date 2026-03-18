@@ -40,6 +40,8 @@ function parsePercent(value: string | undefined, flagName: string): number {
 function parseArgs(): CliArgs {
   const args = process.argv.slice(2);
 
+  // Keep argument parsing intentionally simple because the script only supports
+  // a small fixed set of flags and is meant to stay easy to audit.
   function flag(name: string): string | undefined {
     const idx = args.indexOf(`--${name}`);
     return idx !== -1 ? args[idx + 1] : undefined;
@@ -71,6 +73,8 @@ function sleep(seconds: number): Promise<void> {
 
 function deployWeights(args: CliArgs, greenWeight: number): void {
   const blueWeight = 100 - greenWeight;
+  // Every shift is just another backend deploy with new context values.
+  // That keeps the source of truth in CDK and avoids configuration drift.
   const command = [
     'cdk',
     'deploy',
@@ -126,6 +130,9 @@ async function main(): Promise<void> {
   const direction = args.startGreenWeight < args.targetGreenWeight ? 1 : -1;
   let currentGreenWeight = args.startGreenWeight;
 
+  // Walk green traffic toward the target in fixed increments. After each deploy
+  // the script pauses so the operator can check alarms and target health before
+  // continuing to the next step.
   while (currentGreenWeight !== args.targetGreenWeight) {
     const nextWeight =
       direction > 0

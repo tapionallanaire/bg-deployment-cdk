@@ -45,10 +45,11 @@
 
     "appName": "bg-app",
     "environment": "dev",
+    "ecsImageSource": "asset",
     "vpcMaxAzs": 2,
     "vpcNatGateways": 1,
     "ecsBlueContainerImage": "public.ecr.aws/docker/library/nginx:1.27-alpine",
-    "ecsGreenContainerImage": "public.ecr.aws/docker/library/nginx:1.27-alpine",
+    "ecsGreenContainerImage": "public.ecr.aws/docker/library/nginx:1.28-alpine",
     "ecsContainerPort": 80,
     "ecsCpu": 512,
     "ecsMemoryMiB": 1024,

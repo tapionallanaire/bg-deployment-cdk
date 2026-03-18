@@ -27,6 +27,13 @@ export interface AppContext {
   readonly ecsBlueContainerImage: string;
   /** Docker image for the green service (ECR URI or public image). */
   readonly ecsGreenContainerImage: string;
+  /**
+   * Image source mode for ECS tasks.
+   * 'asset' builds a local Docker asset and pushes it to private ECR via CDK.
+   * 'registry' pulls the image directly from the configured registry URI.
+   * Default: 'asset'.
+   */
+  readonly ecsImageSource: 'asset' | 'registry';
   /** Container TCP port exposed by the application. Default: 80. */
   readonly ecsContainerPort: number;
   /** Fargate task CPU units. Default: 512 (0.5 vCPU). */
@@ -155,6 +162,13 @@ export function resolveContext(node: Node, env: cdk.Environment): AppContext {
 
   const ecsGreenContainerImage =
     optionalContext(node, 'ecsGreenContainerImage') ?? ecsBlueContainerImage;
+  const ecsImageSource = (optionalContext(node, 'ecsImageSource') ?? 'asset') as
+    | 'asset'
+    | 'registry';
+
+  if (ecsImageSource !== 'asset' && ecsImageSource !== 'registry') {
+    throw new Error(`ecsImageSource must be 'asset' or 'registry', got: "${ecsImageSource}"`);
+  }
 
   if (blueTrafficWeight + greenTrafficWeight !== 100) {
     throw new Error(
@@ -207,6 +221,7 @@ export function resolveContext(node: Node, env: cdk.Environment): AppContext {
     vpcNatGateways: numberContext(node, 'vpcNatGateways', 1),
     ecsBlueContainerImage,
     ecsGreenContainerImage,
+    ecsImageSource,
     ecsContainerPort: numberContext(node, 'ecsContainerPort', 80),
     ecsCpu: numberContext(node, 'ecsCpu', 512),
     ecsMemoryMiB: numberContext(node, 'ecsMemoryMiB', 1024),

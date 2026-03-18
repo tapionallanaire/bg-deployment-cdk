@@ -59,8 +59,34 @@ describe('BackendStack', () => {
     });
   });
 
+  it('uses the asset-based image path by default to match the real deploy flow', () => {
+    template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+      ContainerDefinitions: Match.arrayWith([
+        Match.objectLike({
+          Image: Match.anyValue(),
+        }),
+      ]),
+    });
+
+    const taskDefs = Object.values(template.findResources('AWS::ECS::TaskDefinition'));
+    const hasLiteralPublicRegistryImage = taskDefs.some((taskDef) => {
+      const containers = (
+        taskDef as { Properties?: { ContainerDefinitions?: Array<{ Image?: unknown }> } }
+      ).Properties?.ContainerDefinitions;
+
+      return containers?.some(
+        (container) =>
+          typeof container.Image === 'string' &&
+          container.Image.startsWith('public.ecr.aws/docker/library/nginx:'),
+      );
+    });
+
+    expect(hasLiteralPublicRegistryImage).toBe(false);
+  });
+
   it('supports distinct blue and green images', () => {
     const splitImageTemplate = buildTemplate({
+      ecsImageSource: 'registry',
       ecsGreenContainerImage: 'public.ecr.aws/docker/library/nginx:1.28-alpine',
     });
 
@@ -93,19 +119,35 @@ describe('BackendStack', () => {
     template.resourceCountIs('AWS::ElasticLoadBalancingV2::Listener', 2);
   });
 
+  it('does not create Route 53 records when hosted-zone context is omitted', () => {
+    template.resourceCountIs('AWS::Route53::RecordSet', 0);
+  });
+
   it('creates two weighted Route 53 alias records by default', () => {
-    template.resourceCountIs('AWS::Route53::RecordSet', 2);
+    const routedTemplate = buildTemplate({
+      hostedZoneId: 'Z1234567890ABC',
+      hostedZoneName: 'example.com',
+      albDomainName: 'api.example.com',
+    });
+
+    routedTemplate.resourceCountIs('AWS::Route53::RecordSet', 2);
   });
 
   it('default Route 53 weights send 100% to blue and 0% to green', () => {
-    template.hasResourceProperties('AWS::Route53::RecordSet', {
+    const routedTemplate = buildTemplate({
+      hostedZoneId: 'Z1234567890ABC',
+      hostedZoneName: 'example.com',
+      albDomainName: 'api.example.com',
+    });
+
+    routedTemplate.hasResourceProperties('AWS::Route53::RecordSet', {
       Name: 'api.example.com.',
       Type: 'A',
       Weight: 100,
       SetIdentifier: 'test-app-test-blue',
     });
 
-    template.hasResourceProperties('AWS::Route53::RecordSet', {
+    routedTemplate.hasResourceProperties('AWS::Route53::RecordSet', {
       Name: 'api.example.com.',
       Type: 'A',
       Weight: 0,
@@ -115,6 +157,9 @@ describe('BackendStack', () => {
 
   it('custom traffic split (50/50) is reflected in Route 53 record weights', () => {
     const splitTemplate = buildTemplate({
+      hostedZoneId: 'Z1234567890ABC',
+      hostedZoneName: 'example.com',
+      albDomainName: 'api.example.com',
       blueTrafficWeight: 50,
       greenTrafficWeight: 50,
     });
@@ -152,8 +197,16 @@ describe('BackendStack', () => {
     });
   });
 
-  it('CloudWatch log groups have a retention policy set', () => {
-    template.hasResourceProperties('AWS::Logs::LogGroup', {
+  it('CloudWatch log retention is managed explicitly', () => {
+    template.resourceCountIs('Custom::LogRetention', 2);
+
+    template.hasResourceProperties('Custom::LogRetention', {
+      LogGroupName: '/ecs/test-app-test-blue',
+      RetentionInDays: 30,
+    });
+
+    template.hasResourceProperties('Custom::LogRetention', {
+      LogGroupName: '/ecs/test-app-test-green',
       RetentionInDays: 30,
     });
   });

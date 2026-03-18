@@ -5,6 +5,10 @@ export const ALB_HTTPS_PORT = 443;
 /** ECR pull and Secrets Manager access require outbound HTTPS. */
 export const OUTBOUND_HTTPS_PORT = 443;
 export const DNS_PORT = 53;
+// AmazonProvidedDNS uses the same link-local resolver address in every region,
+// so this is an AWS-defined constant rather than deployment-specific context.
+// Ref: https://docs.aws.amazon.com/vpc/latest/userguide/AmazonDNS-concepts.html
+export const AMAZON_PROVIDED_DNS_RESOLVER_CIDR = '169.254.169.253/32';
 
 /** ALB health check configuration. */
 export const HEALTH_CHECK_INTERVAL_SECONDS = 30;

@@ -50,7 +50,7 @@ export interface BlueGreenServiceProps {
   readonly cluster: ecs.ICluster;
   readonly vpc: ec2.IVpc;
   readonly securityGroup: ec2.ISecurityGroup;
-  readonly containerImage: string;
+  readonly containerImage: ecs.ContainerImage;
   readonly containerPort: number;
   readonly cpu: number;
   readonly memoryMiB: number;
@@ -98,11 +98,14 @@ export class BlueGreenService extends Construct {
     // RemovalPolicy.RETAIN regardless of environment — logs are operational audit
     // data. We never want them destroyed automatically. The retention period is the
     // cost control lever; after N days CloudWatch auto-expires the log events.
-    const logGroup = new logs.LogGroup(this, 'LogGroup', {
-      logGroupName: `/ecs/${colorPrefix}`,
+    const logGroupName = `/ecs/${colorPrefix}`;
+    const logRetention = new logs.LogRetention(this, 'LogRetention', {
+      logGroupName,
       retention: resolveRetentionDays(logRetentionDays),
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
+
+    const logGroup = logs.LogGroup.fromLogGroupName(this, 'LogGroup', logGroupName);
 
     // ── Task definition ───────────────────────────────────────────────────────
     const taskDef = new ecs.FargateTaskDefinition(this, 'TaskDef', {
@@ -112,7 +115,7 @@ export class BlueGreenService extends Construct {
     });
 
     taskDef.addContainer('AppContainer', {
-      image: ecs.ContainerImage.fromRegistry(containerImage),
+      image: containerImage,
       portMappings: [{ containerPort, protocol: ecs.Protocol.TCP }],
       logging: ecs.LogDrivers.awsLogs({
         logGroup,
@@ -147,6 +150,8 @@ export class BlueGreenService extends Construct {
         ? { enable: true, rollback: true }
         : undefined,
     });
+
+    this.service.node.addDependency(logRetention);
 
     // ── Target group ──────────────────────────────────────────────────────────
     this.targetGroup = new elbv2.ApplicationTargetGroup(this, 'TargetGroup', {
